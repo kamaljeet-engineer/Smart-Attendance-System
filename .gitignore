@@ -1,0 +1,46 @@
+# -------------------------
+# Virtual Environment
+# -------------------------
+venv/
+.env/
+
+# -------------------------
+# Python Cache
+# -------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# -------------------------
+# Face Recognition Data (IMPORTANT)
+# -------------------------
+encodings.pickle
+
+# -------------------------
+# Dataset & Attendance (Privacy)
+# -------------------------
+dataset/*
+attendance/*
+*.csv
+
+# Keep folder structure
+!dataset/.gitkeep
+!attendance/.gitkeep
+
+# -------------------------
+# IDE / Editor files
+# -------------------------
+.vscode/
+.idea/
+
+# -------------------------
+# OS generated files
+# -------------------------
+.DS_Store
+Thumbs.db
+
+# -------------------------
+# Logs
+# -------------------------
+*.log
