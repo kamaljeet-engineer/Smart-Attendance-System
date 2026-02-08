@@ -58,7 +58,7 @@ def auto_capture_faces():
         print("❌ Camera not opened")
         return
 
-    MAX_IMAGES = 5
+    MAX_IMAGES = 20
     count = 0
     last_time = time.time()
 
