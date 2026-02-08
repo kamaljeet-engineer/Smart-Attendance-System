@@ -19,214 +19,256 @@ os.makedirs(ATTENDANCE_DIR, exist_ok=True)
 
 # ================== DAILY COUNT HELPER ==================
 def get_today_count(file_path, name):
-if not os.path.exists(file_path):
-return 0
+    if not os.path.exists(file_path):
+        return 0
 
-count = 0
-with open(file_path, "r") as f:
-reader = csv.reader(f)
-next(reader)  # skip header
-for row in reader:
-if row[0] == name:
-count += 1
-return count
+    count = 0
+    with open(file_path, "r") as f:
+        reader = csv.reader(f)
+        next(reader)  # skip header
+        for row in reader:
+            if row[0] == name:
+                count += 1
+    return count
 
 
 # ================== AUTO FACE CAPTURE ==================
 def auto_capture_faces():
-name = input("Enter student name: ").strip()
-if name == "":
-print("❌ Name required")
-return
 
-person_dir = os.path.join(DATASET_DIR, name)
-os.makedirs(person_dir, exist_ok=True)
+    name = input("Enter student name: ").strip()
+    if name == "":
+        print("❌ Name required")
+        return
 
-cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-if not cap.isOpened():
-print("❌ Camera not opened")
-return
+    person_dir = os.path.join(DATASET_DIR, name)
+    os.makedirs(person_dir, exist_ok=True)
 
-    MAX_IMAGES = 5
+    # 🔒 LOAD EXISTING ENCODINGS (ANTI-DUPLICATE)
+    existing_encodings = []
+    existing_names = []
+
+    if os.path.exists(ENCODING_FILE):
+        with open(ENCODING_FILE, "rb") as f:
+            data = pickle.load(f)
+            existing_encodings = data["encodings"]
+            existing_names = data["names"]
+
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    if not cap.isOpened():
+        print("❌ Camera not opened")
+        return
+
     MAX_IMAGES = 20
-count = 0
-last_time = time.time()
+    count = 0
+    last_time = time.time()
 
-print("📸 Auto face capture started")
-print("➡️ Look at camera | Auto close after capture")
+    print("📸 Auto Face Capture Started")
+    print("➡️ One face only | Duplicate face blocked")
 
-while True:
-ret, frame = cap.read()
-if not ret:
-break
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
 
-rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-locations = face_recognition.face_locations(rgb)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        locations = face_recognition.face_locations(rgb)
 
-for (top, right, bottom, left) in locations:
-cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
+        # Draw box
+        for (top, right, bottom, left) in locations:
+            cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
 
-if len(locations) == 1:
-if time.time() - last_time > 0.7:
-img_path = os.path.join(person_dir, f"{count}.jpg")
-cv2.imwrite(img_path, frame)
-print(f"[SAVED] {img_path}")
-count += 1
-last_time = time.time()
+        # ✅ ONLY ONE FACE ALLOWED
+        if len(locations) == 1 and time.time() - last_time > 0.7:
 
-cv2.putText(frame, f"Images: {count}/{MAX_IMAGES}",
-(20, 40), cv2.FONT_HERSHEY_SIMPLEX,
-1, (0, 255, 0), 2)
+            encoding = face_recognition.face_encodings(rgb, locations)[0]
 
-cv2.imshow("Auto Face Capture", frame)
+            # 🔒 DUPLICATE CHECK
+            if existing_encodings:
+                distances = face_recognition.face_distance(existing_encodings, encoding)
+                best = distances.argmin()
 
-if count >= MAX_IMAGES:
-break
+                if distances[best] < 0.48 and existing_names[best] != name:
+                    cv2.putText(frame,
+                                "❌ Face already registered!",
+                                (20, 80),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.8, (0, 0, 255), 2)
 
-if cv2.waitKey(1) & 0xFF == ord('q'):
-break
+                    cv2.imshow("Auto Face Capture", frame)
+                    cv2.waitKey(1500)
 
-cap.release()
-cv2.destroyAllWindows()
-cv2.waitKey(1)
-print("✅ Face capture completed")
+                    cap.release()
+                    cv2.destroyAllWindows()
+                    print("🔒 Camera closed (duplicate face)")
+                    return
+
+            # ✅ SAVE IMAGE
+            img_path = os.path.join(person_dir, f"{count}.jpg")
+            cv2.imwrite(img_path, frame)
+            print(f"[SAVED] {img_path}")
+            count += 1
+            last_time = time.time()
+
+        # UI TEXT
+        cv2.putText(frame, f"Images: {count}/{MAX_IMAGES}",
+                    (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1, (0, 255, 0), 2)
+
+        cv2.imshow("Auto Face Capture", frame)
+
+        if count >= MAX_IMAGES:
+            break
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+    print("✅ Face capture completed successfully")
+
 
 
 # ================== TRAIN MODEL ==================
 def train_model():
-encodings = []
-names = []
+    encodings = []
+    names = []
 
-print("[INFO] Training started...")
+    print("[INFO] Training started...")
 
-for person in os.listdir(DATASET_DIR):
-person_path = os.path.join(DATASET_DIR, person)
-if not os.path.isdir(person_path):
-continue
+    for person in os.listdir(DATASET_DIR):
+        person_path = os.path.join(DATASET_DIR, person)
+        if not os.path.isdir(person_path):
+            continue
 
-for img in os.listdir(person_path):
-img_path = os.path.join(person_path, img)
-image = face_recognition.load_image_file(img_path)
-locations = face_recognition.face_locations(image)
+        for img in os.listdir(person_path):
+            img_path = os.path.join(person_path, img)
+            image = face_recognition.load_image_file(img_path)
+            locations = face_recognition.face_locations(image)
 
-if len(locations) != 1:
-continue
+            if len(locations) != 1:
+                continue
 
-encoding = face_recognition.face_encodings(image, locations)[0]
-encodings.append(encoding)
-names.append(person)
+            encoding = face_recognition.face_encodings(image, locations)[0]
+            encodings.append(encoding)
+            names.append(person)
 
-if len(encodings) == 0:
-print("❌ No data to train")
-return
+    if len(encodings) == 0:
+        print("❌ No data to train")
+        return
 
-with open(ENCODING_FILE, "wb") as f:
-pickle.dump({"encodings": encodings, "names": names}, f)
+    with open(ENCODING_FILE, "wb") as f:
+        pickle.dump({"encodings": encodings, "names": names}, f)
 
-print("✅ Training completed")
+    print("✅ Training completed")
 
 
 # ================== MARK ATTENDANCE ==================
 def mark_attendance():
-if not os.path.exists(ENCODING_FILE):
-print("❌ Train model first")
-return
+    if not os.path.exists(ENCODING_FILE):
+        print("❌ Train model first")
+        return
 
-with open(ENCODING_FILE, "rb") as f:
-data = pickle.load(f)
+    with open(ENCODING_FILE, "rb") as f:
+        data = pickle.load(f)
 
-cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-if not cap.isOpened():
-print("❌ Camera not opened")
-return
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    if not cap.isOpened():
+        print("❌ Camera not opened")
+        return
 
-attendance_done = False
+    attendance_done = False
 
-date = datetime.now().strftime("%Y-%m-%d")
-file_path = os.path.join(ATTENDANCE_DIR, f"attendance_{date}.csv")
+    date = datetime.now().strftime("%Y-%m-%d")
+    file_path = os.path.join(ATTENDANCE_DIR, f"attendance_{date}.csv")
 
-if not os.path.exists(file_path):
-with open(file_path, "w", newline="") as f:
-csv.writer(f).writerow(["Name", "Time"])
+    if not os.path.exists(file_path):
+        with open(file_path, "w", newline="") as f:
+            csv.writer(f).writerow(["Name", "Time"])
 
-print("🟢 Attendance started (auto close after marking)")
+    print("🟢 Attendance started (auto close after marking)")
 
-while True:
-ret, frame = cap.read()
-if not ret:
-break
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
 
-rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-locations = face_recognition.face_locations(rgb)
-encodings = face_recognition.face_encodings(rgb, locations)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        locations = face_recognition.face_locations(rgb)
+        encodings = face_recognition.face_encodings(rgb, locations)
 
-for encoding, (top, right, bottom, left) in zip(encodings, locations):
-distances = face_recognition.face_distance(data["encodings"], encoding)
-best_match = distances.argmin()
+        for encoding, (top, right, bottom, left) in zip(encodings, locations):
+            distances = face_recognition.face_distance(data["encodings"], encoding)
+            best_match = distances.argmin()
 
-name = "Unknown"
-if distances[best_match] < 0.45:
-name = data["names"][best_match]
+            name = "Unknown"
+            if distances[best_match] < 0.45:
+                name = data["names"][best_match]
 
-today_count = get_today_count(file_path, name)
-if today_count >= 2:
-print(f"⚠️ {name} attendance limit reached (2 times)")
-continue
+                today_count = get_today_count(file_path, name)
+                if today_count >= 2:
+                        print(f"⚠️ {name} attendance limit reached (2 times)")
+                        time.sleep(2)
+                        cap.release()
+                        cv2.destroyAllWindows()
+                        print("🔒 Camera closed (limit reached)")
+                        return
 
-time_now = datetime.now().strftime("%H:%M:%S")
-with open(file_path, "a", newline="") as f:
-csv.writer(f).writerow([name, time_now])
 
-attendance_done = True
-print(f"[ATTENDANCE MARKED] {name}")
+                time_now = datetime.now().strftime("%H:%M:%S")
+                with open(file_path, "a", newline="") as f:
+                    csv.writer(f).writerow([name, time_now])
 
-color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
-cv2.rectangle(frame, (left, top), (right, bottom), color, 2)
-cv2.putText(frame, name, (left, top - 10),
-cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+                attendance_done = True
+                print(f"[ATTENDANCE MARKED] {name}")
 
-cv2.imshow("Smart Attendance", frame)
+            color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
+            cv2.rectangle(frame, (left, top), (right, bottom), color, 2)
+            cv2.putText(frame, name, (left, top - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
-if attendance_done:
-cv2.putText(frame, "Attendance Done",
-(50, 50), cv2.FONT_HERSHEY_SIMPLEX,
-1, (0, 255, 0), 3)
-cv2.imshow("Smart Attendance", frame)
-cv2.waitKey(2000)
-break
+        cv2.imshow("Smart Attendance", frame)
 
-if cv2.waitKey(1) & 0xFF == ord('q'):
-break
+        if attendance_done:
+            cv2.putText(frame, "Attendance Done",
+                        (50, 50), cv2.FONT_HERSHEY_SIMPLEX,
+                        1, (0, 255, 0), 3)
+            cv2.imshow("Smart Attendance", frame)
+            cv2.waitKey(2000)
+            break
 
-cap.release()
-cv2.destroyAllWindows()
-cv2.waitKey(1)
-print("✅ Camera closed automatically")
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+    cv2.waitKey(1)
+    print("✅ Camera closed automatically")
 
 
 # ================== MAIN MENU ==================
 def main():
-while True:
-print("\n===== SMART ATTENDANCE SYSTEM =====")
-print("1. Auto Capture Face")
-print("2. Train Face Model")
-print("3. Mark Attendance")
-print("4. Exit")
+    while True:
+        print("\n===== SMART ATTENDANCE SYSTEM =====")
+        print("1. Auto Capture Face")
+        print("2. Train Face Model")
+        print("3. Mark Attendance")
+        print("4. Exit")
 
-choice = input("Enter choice: ").strip()
+        choice = input("Enter choice: ").strip()
 
-if choice == "1":
-auto_capture_faces()
-elif choice == "2":
-train_model()
-elif choice == "3":
-mark_attendance()
-elif choice == "4":
-print("👋 Exiting safely")
-break
-else:
-print("❌ Invalid choice")
+        if choice == "1":
+            auto_capture_faces()
+        elif choice == "2":
+            train_model()
+        elif choice == "3":
+            mark_attendance()
+        elif choice == "4":
+            print("👋 Exiting safely")
+            break
+        else:
+            print("❌ Invalid choice")
 
 
 if __name__ == "__main__":
-main()
+    main()
