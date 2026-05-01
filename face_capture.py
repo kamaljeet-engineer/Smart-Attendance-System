@@ -1,7 +1,6 @@
 import cv2
 import os
 import time
-
 # ================== SETTINGS ==================
 NAME = input("Enter student name: ").strip()
 SAVE_DIR = os.path.join("dataset", NAME)
